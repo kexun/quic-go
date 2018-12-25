@@ -156,6 +156,7 @@ func (h *packetHandlerMap) listen() {
 		data = data[:n]
 
 		if err := h.handlePacket(addr, data); err != nil {
+			putPacketBuffer(&data)
 			h.logger.Debugf("error handling packet from %s: %s", addr, err)
 		}
 	}
