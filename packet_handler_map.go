@@ -169,11 +169,13 @@ func (h *packetHandlerMap) handlePacket(addr net.Addr, data []byte) error {
 		return fmt.Errorf("error parsing header: %s", err)
 	}
 
+	refCount := 1
 	p := &receivedPacket{
 		remoteAddr: addr,
 		hdr:        hdr,
-		data:       data,
 		rcvTime:    time.Now(),
+		data:       data,
+		refCount:   &refCount,
 	}
 
 	h.mutex.RLock()

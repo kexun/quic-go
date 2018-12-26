@@ -53,8 +53,11 @@ type cryptoStreamHandler interface {
 type receivedPacket struct {
 	remoteAddr net.Addr
 	hdr        *wire.Header
-	data       []byte
 	rcvTime    time.Time
+
+	// The data slice must be taken from the
+	data     []byte
+	refCount *int
 }
 
 type closeError struct {
@@ -368,9 +371,6 @@ runLoop:
 			if wasProcessed := s.handlePacketImpl(p); !wasProcessed {
 				continue
 			}
-			// This is a bit unclean, but works properly, since the packet always
-			// begins with the public header and we never copy it.
-			// TODO: putPacketBuffer(&p.extHdr.Raw)
 		case <-s.handshakeCompleteChan:
 			s.handleHandshakeComplete()
 		}
@@ -475,6 +475,19 @@ func (s *session) handleHandshakeComplete() {
 }
 
 func (s *session) handlePacketImpl(p *receivedPacket) bool /* was the packet successfully processed */ {
+	var wasQueued bool
+
+	// Put back the packet buffer if the packet wasn't queued for later decryption.
+	defer func() {
+		if wasQueued {
+			return
+		}
+		*p.refCount--
+		if *p.refCount == 0 {
+			putPacketBuffer(&p.data)
+		}
+	}()
+
 	// The server can change the source connection ID with the first Handshake packet.
 	// After this, all packets with a different source connection have to be ignored.
 	if s.receivedFirstPacket && p.hdr.IsLongHeader && !p.hdr.SrcConnectionID.Equal(s.destConnID) {
@@ -490,6 +503,7 @@ func (s *session) handlePacketImpl(p *receivedPacket) bool /* was the packet suc
 	// if the decryption failed, this might be a packet sent by an attacker
 	if err != nil {
 		if err == handshake.ErrOpenerNotYetAvailable {
+			wasQueued = true
 			s.tryQueueingUndecryptablePacket(p)
 			return false
 		}
